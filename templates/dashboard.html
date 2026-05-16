@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FF Guild Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
+.container{max-width:1100px;margin:0 auto;padding:20px}
+.header{display:flex;justify-content:space-between;align-items:center;padding:30px 0}
+.header h1{font-size:1.8rem;color:#fff}.header h1 span{color:#ff6b35}
+.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:30px;margin-bottom:20px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px;text-align:center}
+.stat-label{font-size:.8rem;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.stat-value{font-size:1.6rem;font-weight:700;color:#fff}
+.stat-value.gold{color:#ff6b35}.stat-value.green{color:#28a745}.stat-value.red{color:#dc3545}
+.bot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:20px}
+.bot-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px}
+.bot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.bot-name{font-weight:600;color:#fff;font-size:.9rem}
+.bot-details{font-size:.85rem;color:#999;line-height:1.6}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-weight:600;text-decoration:none;display:inline-block}
+.btn-secondary{background:rgba(255,255,255,.08);color:#ccc;border:1px solid rgba(255,255,255,.15)}
+.btn-secondary:hover{background:rgba(255,255,255,.15);color:#fff}
+#liveDot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;animation:pulse 2s infinite}
+.live{background:#28a745;box-shadow:0 0 15px rgba(40,167,69,.6)}
+.dead{background:#dc3545;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.empty{grid-column:1/-1;text-align:center;padding:60px;color:#555}
+.empty h2{font-size:2rem;color:#333;margin-bottom:10px}
+.guild-detail{background:rgba(255,107,53,.1);border:1px solid rgba(255,107,53,.2);border-radius:10px;padding:15px;margin-bottom:15px;display:flex;align-items:center;gap:15px}
+.guild-icon{font-size:2rem;width:50px;height:50px;border-radius:10px;background:rgba(255,107,53,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.guild-name{font-size:1.1rem;font-weight:600;color:#fff}
+.guild-meta{font-size:.8rem;color:#999;margin-top:3px}
+@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>FF Guild <span>Dashboard</span></h1>
+<a href="/" class="btn btn-secondary"> Config</a>
+</div>
+<div class="card">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+<h2 style="color:#fff;">Live Monitor</h2>
+<span><span id="liveDot" class="dead"></span><span id="liveText">Connecting...</span></span>
+</div>
+<div id="guildDetail"></div>
+<div class="stats-grid">
+<div class="stat-card"><div class="stat-label">Glory</div><div class="stat-value gold" id="dgGlory">0</div></div>
+<div class="stat-card"><div class="stat-label">Matches</div><div class="stat-value" id="dgMatches">0</div></div>
+<div class="stat-card"><div class="stat-label">Glory/H</div><div class="stat-value" id="dgGloryH">0</div></div>
+<div class="stat-card"><div class="stat-label">Success</div><div class="stat-value green" id="dgSuccess">0%</div></div>
+<div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="dgActive">0/0</div></div>
+<div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value" id="dgTime">00:00</div></div>
+</div>
+<div class="bot-grid" id="dgBots"><div class="empty"><h2>No Data Yet</h2><p>Start the bot from the main page.</p></div></div>
+</div></div>
+<script>
+let es=new EventSource('/api/status/stream');
+es.onmessage=function(e){try{let d=JSON.parse(e.data);document.getElementById('liveDot').className=d.running?'live':'dead';document.getElementById('liveText').textContent=d.running?'Running':'Offline';let gd=document.getElementById('guildDetail');if(d.guild_info&&d.guild_info.guildFound){gd.innerHTML='<div class="guild-detail"><div class="guild-icon"></div><div><div class="guild-name">'+d.guild_info.guildName+'</div><div class="guild-meta">Level '+d.guild_info.guildLevel+' | '+d.guild_info.memberNum+'/'+d.guild_info.capacity+' Members | ID: '+d.guild_info.guildId+'</div></div></div>'}else{gd.innerHTML=''}
+if(d.stats){let s=d.stats;document.getElementById('dgGlory').textContent=s.total_glory||0;document.getElementById('dgMatches').textContent=s.matches||0;document.getElementById('dgGloryH').textContent=s.glory_per_hour||0;let tot=s.success+s.failed;document.getElementById('dgSuccess').textContent=tot>0?Math.round(s.success/tot*100)+'%':'0%';document.getElementById('dgActive').textContent=(s.active_bots||0)+'/'+(s.bot_count||0);if(s.running_hours){let h=Math.floor(s.running_hours),m=Math.floor((s.running_hours-h)*60),sc=Math.floor(((s.running_hours-h)*60-m)*60);document.getElementById('dgTime').textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sc).padStart(2,'0')}}
+let g=document.getElementById('dgBots');g.innerHTML='';if(d.bots&&Object.keys(d.bots).length>0){Object.entries(d.bots).forEach(([id,b])=>{let c=document.createElement('div');c.className='bot-card';let sc=b.status==='success'?'green':b.status==='failed'?'red':'';c.innerHTML='<div class="bot-header"><span class="bot-name">'+id.replace('_',' ').toUpperCase()+'</span><span style="color:'+(b.status==='success'?'#28a745':b.status==='failed'?'#ff6b6b':'#ffc107')+'">'+b.status+'</span></div><div class="bot-details"><div>UID: '+b.uid+'</div><div>Sent: '+b.sent+' | OK: '+b.ok+' | Rate: '+(b.sent>0?Math.round(b.ok/b.sent*100)+'%':'0%')+'</div>'+(b.error?'<div style="color:#ff6b6b;">'+b.error+'</div>':'')+'</div>';g.appendChild(c)})}else{g.innerHTML='<div class="empty"><h2>No Bots Active</h2><p>Start the bot from the configuration page.</p></div>'}}catch(e){}};
+es.onerror=function(){document.getElementById('liveDot').className='dead';document.getElementById('liveText').textContent='Disconnected'};
+</script>
+</body>
+</html>
