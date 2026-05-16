@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FF Guild Glory Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#0a0a1a 0%,#1a1a2e 50%,#16213e 100%);color:#e0e0e0;min-height:100vh}
+.container{max-width:1000px;margin:0 auto;padding:20px}
+.header{text-align:center;padding:30px 20px}
+.header h1{font-size:2.2rem;color:#fff;margin-bottom:8px}
+.header h1 span{color:#ff6b35;text-shadow:0 0 20px rgba(255,107,53,.3)}
+.subtitle{color:#888;font-size:.95rem;letter-spacing:1px}
+.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:30px;backdrop-filter:blur(10px);margin-bottom:20px}
+.card-title{color:#fff;font-size:1.2rem;font-weight:600;margin-bottom:20px;display:flex;align-items:center;gap:10px}
+.form-group{margin-bottom:18px}
+.form-group label{display:block;color:#ccc;font-weight:600;margin-bottom:8px;font-size:.95rem}
+.form-group input{width:100%;padding:14px 16px;background:rgba(0,0,0,.3);border:2px solid rgba(255,255,255,.1);border-radius:10px;color:#fff;font-size:1.1rem;transition:all .3s}
+.form-group input:focus{outline:none;border-color:#ff6b35;box-shadow:0 0 0 3px rgba(255,107,53,.2)}
+.btn{padding:14px 28px;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;transition:all .3s;text-decoration:none;display:inline-block}
+.btn-primary{background:linear-gradient(135deg,#ff6b35,#ff4d00);color:#fff;box-shadow:0 4px 15px rgba(255,107,53,.4);width:100%}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 6px 25px rgba(255,107,53,.5)}
+.btn-primary:disabled{opacity:.6;cursor:not-allowed;transform:none}
+.btn-danger{background:linear-gradient(135deg,#dc3545,#a71d2a);color:#fff;box-shadow:0 4px 15px rgba(220,53,69,.4);width:100%}
+.btn-danger:hover{transform:translateY(-2px);box-shadow:0 6px 25px rgba(220,53,69,.5)}
+.btn-secondary{background:rgba(255,255,255,.08);color:#ccc;border:1px solid rgba(255,255,255,.15);padding:10px 20px;border-radius:8px}
+.btn-secondary:hover{background:rgba(255,255,255,.15);color:#fff}
+.btn-small{padding:8px 16px;font-size:.85rem}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mt-10{margin-top:10px}.mb-10{margin-bottom:10px}.hidden{display:none}
+.badge{background:#ff6b35;color:#fff;padding:2px 10px;border-radius:20px;font-size:.8rem;font-weight:600}
+.badge-green{background:#28a745;color:#fff;padding:2px 10px;border-radius:20px;font-size:.8rem;font-weight:600}
+.highlight{color:#ff6b35;font-weight:700}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px;text-align:center}
+.stat-label{font-size:.8rem;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.stat-value{font-size:1.5rem;font-weight:700;color:#fff}
+.stat-value.gold{color:#ff6b35}
+.stat-value.green{color:#28a745}
+.stat-value.red{color:#dc3545}
+.bot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.bot-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px}
+.bot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.bot-name{font-weight:600;color:#fff}
+.bot-details{font-size:.85rem;color:#999}
+.bot-details div{margin:3px 0}
+.error-text{color:#ff6b6b}
+.guild-card{background:linear-gradient(135deg,rgba(255,107,53,.1),rgba(255,77,0,.05));border:1px solid rgba(255,107,53,.2);border-radius:12px;padding:20px;margin-bottom:20px;display:flex;align-items:center;gap:20px}
+.guild-icon{width:64px;height:64px;border-radius:12px;background:rgba(255,107,53,.2);display:flex;align-items:center;justify-content:center;font-size:2rem;flex-shrink:0}
+.guild-info{flex:1}
+.guild-name{font-size:1.3rem;font-weight:700;color:#fff;margin-bottom:4px}
+.guild-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;color:#999}
+.guild-meta span{display:flex;align-items:center;gap:4px}
+.guild-not-found{text-align:center;padding:20px;color:#888}
+.toast{position:fixed;bottom:30px;right:30px;padding:16px 24px;border-radius:10px;color:#fff;font-weight:600;z-index:1000;animation:slideIn .3s}
+.toast.success{background:#28a745}.toast.error{background:#dc3545}
+@keyframes slideIn{from{transform:translateY(100px);opacity:0}to{transform:translateY(0);opacity:1}}
+@media(max-width:600px){.grid-2{grid-template-columns:1fr}.stats-grid{grid-template-columns:repeat(2,1fr)}.guild-card{flex-direction:column;text-align:center}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>FF Guild <span>Glory Bot</span></h1>
+<p class="subtitle">India Server &bull; Real Free Fire API &bull; Real-Time Dashboard</p>
+</div>
+
+<div class="card">
+<div class="card-title">Guild Configuration</div>
+<div class="grid-2">
+<div class="form-group">
+<label>Guild ID</label>
+<input type="text" id="guildId" placeholder="e.g. 3033195648" pattern="[0-9]{8,12}" required>
+</div>
+<div class="form-group">
+<label>Number of Bots</label>
+<div class="flex">
+<button class="btn btn-secondary btn-small" onclick="adj(-5)">-5</button>
+<button class="btn btn-secondary btn-small" onclick="adj(-1)">-1</button>
+<input type="number" id="botCount" value="5" min="1" max="50" style="width:70px;text-align:center;padding:10px;background:rgba(0,0,0,.3);border:2px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:1.1rem">
+<button class="btn btn-secondary btn-small" onclick="adj(1)">+1</button>
+<button class="btn btn-secondary btn-small" onclick="adj(5)">+5</button>
+</div>
+</div>
+</div>
+<button class="btn btn-secondary btn-small" onclick="lookupGuild()" style="margin-bottom:15px"> Lookup Guild Info</button>
+<div id="guildInfoCard" class="hidden"></div>
+<div class="flex mt-10" style="justify-content:space-between">
+<button class="btn btn-primary" id="startBtn" onclick="startBot()"> Start Guild Glory Bot</button>
+<button class="btn btn-danger hidden" id="stopBtn" onclick="stopBot()"> Stop Bot</button>
+</div>
+</div>
+
+<div class="card">
+<div class="card-title">Guest Accounts <span class="badge" id="accCount">0</span></div>
+<div class="flex mb-10">
+<button class="btn btn-secondary btn-small" onclick="generateGuests()"> Auto-Generate</button>
+<button class="btn btn-secondary btn-small" onclick="toggleAdd()"> + Manual Add</button>
+</div>
+<div id="addForm" class="hidden" class="mb-10">
+<div class="flex">
+<input type="text" id="newUid" placeholder="Guest UID" style="flex:2;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff">
+<input type="text" id="newPass" placeholder="Password" style="flex:2;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff">
+<button class="btn btn-primary btn-small" onclick="addAccount()" style="flex:.5">Add</button>
+</div>
+</div>
+<p style="color:#888;font-size:.9rem" id="accStatus">Loading account stats...</p>
+</div>
+
+<div class="card hidden" id="dashboard">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+<div class="card-title" style="margin-bottom:0">Live Dashboard</div>
+<span class="badge-green" id="statusBadge"> Stopped</span>
+</div>
+<div class="stats-grid">
+<div class="stat-card"><div class="stat-label">Guild</div><div class="stat-value" id="dGuild" style="font-size:1rem">-</div></div>
+<div class="stat-card"><div class="stat-label">Glory Earned</div><div class="stat-value gold" id="dGlory">0</div></div>
+<div class="stat-card"><div class="stat-label">Matches</div><div class="stat-value" id="dMatches">0</div></div>
+<div class="stat-card"><div class="stat-label">Glory/Hour</div><div class="stat-value" id="dGloryH">0</div></div>
+<div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value" id="dSuccess">0%</div></div>
+<div class="stat-card"><div class="stat-label">Run Time</div><div class="stat-value" id="dTime">00:00</div></div>
+</div>
+<div class="bot-grid" id="botGrid"><div class="stat-card" style="grid-column:1/-1;text-align:center;padding:40px;color:#666">Bots appear here once started</div></div>
+</div>
+</div>
+
+<script>
+let es=null,running=false;
+function adj(d){let i=document.getElementById('botCount');let v=parseInt(i.value)+d;i.value=Math.max(1,Math.min(50,v))}
+function toast(m,t){let d=document.createElement('div');d.className='toast '+t;d.textContent=m;document.body.appendChild(d);setTimeout(()=>d.remove(),3000)}
+function toggleAdd(){document.getElementById('addForm').classList.toggle('hidden')}
+async function lookupGuild(){let g=document.getElementById('guildId').value.trim();if(!g||!/^\d{8,12}$/.test(g)){toast('Enter a valid 8-12 digit Guild ID','error');return}
+let card=document.getElementById('guildInfoCard');card.innerHTML='<div style="text-align:center;padding:20px;color:#888">Looking up guild...</div>';card.classList.remove('hidden');try{let r=await fetch('/api/guild/info?guild_id='+g);let d=await r.json();if(d.guildFound){let cap=d.capacity||35,mem=d.memberNum||0;let pct=Math.round(mem/cap*100);card.innerHTML='<div class="guild-card"><div class="guild-icon"></div><div class="guild-info"><div class="guild-name">'+d.guildName+'</div><div class="guild-meta"><span> Level '+d.guildLevel+'</span><span> '+mem+'/'+cap+' Members ('+pct+'%)</span><span> ID: '+d.guildId+'</span></div></div></div>'}else{card.innerHTML='<div class="guild-not-found"> Guild not found. Make sure the Guild ID is correct.</div>'}}catch(e){card.innerHTML='<div class="guild-not-found"> Error fetching guild info. API may be temporarily down.</div>'}}
+function connectSSE(){if(es)es.close();es=new EventSource('/api/status/stream');es.onmessage=function(e){try{updateDashboard(JSON.parse(e.data))}catch(e){}};es.onerror=function(){if(running)setTimeout(connectSSE,3000)}}
+function updateDashboard(d){if(!d||!d.stats)return;let s=d.stats;let gi=d.guild_info||{};document.getElementById('dGuild').textContent=gi.guildFound?gi.guildName:(d.guild_id||'-');document.getElementById('dGlory').textContent=s.total_glory||0;document.getElementById('dMatches').textContent=s.matches||0;document.getElementById('dGloryH').textContent=s.glory_per_hour||0;let tot=s.success+s.failed;document.getElementById('dSuccess').textContent=tot>0?Math.round(s.success/tot*100)+'%':'0%';if(s.running_hours){let h=Math.floor(s.running_hours),m=Math.floor((s.running_hours-h)*60),sc=Math.floor(((s.running_hours-h)*60-m)*60);document.getElementById('dTime').textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sc).padStart(2,'0')}
+let grid=document.getElementById('botGrid');grid.innerHTML='';if(d.bots&&Object.keys(d.bots).length>0){Object.entries(d.bots).forEach(([id,b])=>{let c=document.createElement('div');c.className='bot-card';let sc=b.status==='success'?'green':b.status==='failed'?'error-text':'';c.innerHTML='<div class="bot-header"><span class="bot-name">'+id.replace('_',' ').toUpperCase()+'</span><span class="'+sc+'">'+b.status+'</span></div><div class="bot-details"><div>UID: '+b.uid+'</div><div>Sent: '+b.sent+' | OK: '+b.ok+' | Rate: '+(b.sent>0?Math.round(b.ok/b.sent*100)+'%':'0%')+'</div>'+(b.error?'<div class="error-text"> '+b.error+'</div>':'')+'</div>';grid.appendChild(c)})}else{grid.innerHTML='<div class="stat-card" style="grid-column:1/-1;text-align:center;padding:40px;color:#666">Bots appear here once started</div>'}}
+async function startBot(){let g=document.getElementById('guildId').value.trim(),b=document.getElementById('botCount').value;if(!g||!/^\d{8,12}$/.test(g)){toast('Enter a valid 8-12 digit Guild ID','error');return}
+document.getElementById('startBtn').disabled=true;document.getElementById('startBtn').textContent=' Starting...';try{let r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:g,bot_count:parseInt(b)})});let d=await r.json();if(d.success){running=true;document.getElementById('startBtn').classList.add('hidden');document.getElementById('stopBtn').classList.remove('hidden');document.getElementById('dashboard').classList.remove('hidden');document.getElementById('statusBadge').textContent=' Running';connectSSE();toast(d.message,'success')}else{toast(d.message,'error')}}catch(e){toast('Connection error','error')}
+document.getElementById('startBtn').disabled=false;document.getElementById('startBtn').textContent=' Start Guild Glory Bot'}
+async function stopBot(){try{await fetch('/api/stop',{method:'POST'});running=false;if(es){es.close();es=null}
+document.getElementById('startBtn').classList.remove('hidden');document.getElementById('stopBtn').classList.add('hidden');document.getElementById('statusBadge').textContent=' Stopped';toast('Bot stopped','success')}catch(e){toast('Error','error')}}
+async function generateGuests(){try{let r=await fetch('/api/guests/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:10,region:'IND'})});let d=await r.json();toast('Generated '+d.generated+' accounts!','success');loadAccStats()}catch(e){toast('Error','error')}}
+async function addAccount(){let u=document.getElementById('newUid').value.trim(),p=document.getElementById('newPass').value.trim();if(!u||!p){toast('Enter UID and password','error');return}
+try{let r=await fetch('/api/guests/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:u,password:p,region:'IND'})});let d=await r.json();d.success?(toast('Account added!','success'),document.getElementById('newUid').value='',document.getElementById('newPass').value='',toggleAdd(),loadAccStats()):toast(d.message,'error')}catch(e){toast('Error','error')}}
+async function loadAccStats(){try{let r=await fetch('/api/guests/count');let d=await r.json();document.getElementById('accCount').textContent=d.working||0;document.getElementById('accStatus').textContent='Working: '+(d.working||0)+' | Total: '+(d.total||0)}catch(e){}}
+loadAccStats();fetch('/api/status').then(r=>r.json()).then(d=>{if(d.running){running=true;document.getElementById('startBtn').classList.add('hidden');document.getElementById('stopBtn').classList.remove('hidden');document.getElementById('dashboard').classList.remove('hidden');document.getElementById('statusBadge').textContent=' Running';if(d.guild_info&&d.guild_info.guildFound){let c=document.getElementById('guildInfoCard');c.innerHTML='<div class="guild-card"><div class="guild-icon"></div><div class="guild-info"><div class="guild-name">'+d.guild_info.guildName+'</div><div class="guild-meta"><span> Level '+d.guild_info.guildLevel+'</span><span> '+d.guild_info.memberNum+'/'+d.guild_info.capacity+' Members</span></div></div></div>';c.classList.remove('hidden')}
+connectSSE()}}).catch(()=>{})
+</script>
+</body>
+</html>
