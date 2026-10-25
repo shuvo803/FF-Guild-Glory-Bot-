@@ -138,9 +138,15 @@ async def get_access_token(uid, password):
     }
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, json=payload, headers=headers, timeout=15)
-        data = resp.json()
-        inner = data.get('data', data)
-        return inner.get('access_token', '0'), inner.get('open_id', '0')
+        try:
+            data = resp.json()
+        except Exception:
+            raise ValueError('Step 1 (guest login): HTTP ' + str(resp.status_code) + ', reply is not JSON')
+        inner = data.get('data', data) if isinstance(data, dict) else {}
+        token = inner.get('access_token', '0')
+        if token == '0':
+            raise ValueError('Step 1 (guest login) rejected, HTTP ' + str(resp.status_code) + ': ' + str(data)[:90])
+        return token, inner.get('open_id', '0')
 
 
 async def create_jwt(uid, password):
@@ -176,12 +182,15 @@ async def create_jwt(uid, password):
             timeout=15,
         )
         login_res = freefire_pb2.LoginRes()
-        login_res.ParseFromString(resp.content)
+        try:
+            login_res.ParseFromString(resp.content)
+        except Exception:
+            raise ValueError('Step 2 (MajorLogin): HTTP ' + str(resp.status_code) + ', reply is not valid protobuf')
         msg = json.loads(json_format.MessageToJson(login_res))
         token = msg.get('token', '0')
         lock_region = msg.get('lockRegion', '0')
         if token == '0':
-            raise ValueError('Failed to get JWT')
+            raise ValueError('Step 2 (MajorLogin): HTTP ' + str(resp.status_code) + ', no token in reply')
         return token, lock_region
 
 
@@ -225,9 +234,11 @@ def send_ff_sync(uid, pwd, target, region):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         status = loop.run_until_complete(send_ff_request(uid, pwd, target, region))
-        return {'success': status == 200, 'status': status, 'jwt': 'sent'}
+        if status == 200:
+            return {'success': True, 'status': status, 'jwt': 'sent'}
+        return {'success': False, 'status': status, 'message': 'Step 3 (LikeProfile): HTTP ' + str(status)}
     except Exception as e:
-        return {'success': False, 'message': str(e)[:120]}
+        return {'success': False, 'message': (type(e).__name__ + ': ' + str(e))[:160]}
 
 
 class BotState:
@@ -304,6 +315,7 @@ def bot_worker(bot_id, uid, password, guild_id, region):
     key = 'bot_' + str(bot_id)
     total_sent = 0
     total_ok = 0
+    last_error = ''
     while bot_state.running:
         with bot_state.lock:
             bot_state.bots[key] = {
@@ -312,11 +324,13 @@ def bot_worker(bot_id, uid, password, guild_id, region):
                 'sent': total_sent,
                 'ok': total_ok,
                 'last_active': time.time(),
+                'error': last_error,
             }
         result = send_ff_sync(uid, password, guild_id, region)
         total_sent += 1
         if result.get('success'):
             total_ok += 1
+            last_error = ''
             with bot_state.lock:
                 bot_state.stats['success'] += 1
                 bot_state.stats['total_glory'] += 4
@@ -329,6 +343,7 @@ def bot_worker(bot_id, uid, password, guild_id, region):
                     'last_active': time.time(),
                 }
         else:
+            last_error = result.get('message') or ('HTTP ' + str(result.get('status', '?')))
             with bot_state.lock:
                 bot_state.stats['failed'] += 1
                 bot_state.bots[key] = {
@@ -337,9 +352,12 @@ def bot_worker(bot_id, uid, password, guild_id, region):
                     'sent': total_sent,
                     'ok': total_ok,
                     'last_active': time.time(),
-                    'error': result.get('message', ''),
+                    'error': last_error,
                 }
-        time.sleep(random.randint(60, 180))
+        for _ in range(random.randint(60, 180)):
+            if not bot_state.running:
+                break
+            time.sleep(1)
 
 
 @app.route('/')
@@ -447,16 +465,16 @@ def api_start():
             'start_time': time.time(), 'running_hours': 0,
         }
     for i, acc in enumerate(accounts):
-        threading.Thread(
-            target=bot_worker,
-            args=(i, acc.uid, acc.password, guild_id, region),
-            daemon=True
-        ).start()
         with bot_state.lock:
             bot_state.bots['bot_' + str(i)] = {
                 'uid': acc.uid, 'status': 'starting',
                 'sent': 0, 'ok': 0, 'last_active': time.time(),
             }
+        threading.Thread(
+            target=bot_worker,
+            args=(i, acc.uid, acc.password, guild_id, region),
+            daemon=True
+        ).start()
         acc.last_used = datetime.utcnow()
         db.session.commit()
     return jsonify({
