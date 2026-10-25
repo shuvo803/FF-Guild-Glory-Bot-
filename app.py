@@ -38,6 +38,9 @@ def normalize_db_url(url):
 app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(os.environ.get('DATABASE_URL'))
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
+# The bot always works on the Bangladesh server.
+REGION = 'BD'
+
 db = SQLAlchemy(app)
 
 MAIN_KEY = base64.b64decode('WWcmdGMlREV1aDYlWmNeOA==')
@@ -53,7 +56,7 @@ class GuestAccount(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     uid = db.Column(db.String(20), unique=True, nullable=False)
     password = db.Column(db.String(100), nullable=False)
-    region = db.Column(db.String(10), default='IND')
+    region = db.Column(db.String(10), default=REGION)
     is_working = db.Column(db.Boolean, default=True)
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_used = db.Column(db.DateTime, nullable=True)
@@ -95,7 +98,7 @@ def _find_key(obj, names):
     return None
 
 
-def fetch_guild_info(guild_id, region='IND'):
+def fetch_guild_info(guild_id, region=REGION):
     now = time.time()
     cache_key = guild_id + '_' + region
     if cache_key in guild_info_cache:
@@ -279,7 +282,7 @@ def send_ff_sync(uid, pwd, target, region):
 class BotState:
     def __init__(self):
         self.guild_id = ''
-        self.region = 'IND'
+        self.region = REGION
         self.guild_info = {}
         self.running = False
         self.bots = {}
@@ -463,7 +466,7 @@ def status_stream():
 @app.route('/api/guild/info')
 def api_guild_info():
     guild_id = request.args.get('guild_id', '').strip()
-    region = request.args.get('region', 'IND')
+    region = REGION
     if not guild_id or not guild_id.isdigit():
         return jsonify({'error': 'Valid guild_id required'})
     info = fetch_guild_info(guild_id, region)
@@ -475,7 +478,7 @@ def api_start():
     data = request.get_json()
     guild_id = data.get('guild_id', '').strip()
     bot_count = int(data.get('bot_count', 5))
-    region = data.get('region', 'IND')
+    region = REGION
     if not guild_id or not guild_id.isdigit():
         return jsonify({'success': False, 'message': 'Valid numeric Guild ID required'})
     accounts = GuestAccount.query.filter_by(is_working=True).order_by(GuestAccount.last_used).limit(bot_count).all()
@@ -540,7 +543,7 @@ def api_guests_add():
     data = request.get_json()
     uid = data.get('uid', '').strip()
     password = data.get('password', '').strip()
-    region = data.get('region', 'IND')
+    region = REGION
     if not uid or not password:
         return jsonify({'success': False, 'message': 'UID and password required'})
     if GuestAccount.query.filter_by(uid=uid).first():
@@ -555,7 +558,7 @@ def api_guests_add():
 def api_guests_generate():
     data = request.get_json()
     count = int(data.get('count', 10))
-    region = data.get('region', 'IND')
+    region = REGION
     generated = []
     for _ in range(count):
         fake_uid = str(random.randint(1000000000, 9999999999))
@@ -597,7 +600,7 @@ def api_test_guest():
         data.get('uid', ''),
         data.get('password', ''),
         data.get('target', '0000000000'),
-        'IND',
+        REGION,
     )
     return jsonify(result)
 
