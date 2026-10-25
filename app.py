@@ -20,13 +20,23 @@ import requests as sync_requests
 from ff_proto import freefire_pb2, send_like_pb2
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///accounts.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db_url = app.config['SQLALCHEMY_DATABASE_URI']
-if db_url and db_url.startswith('postgres://'):
-    db_url = db_url.replace('postgres://', 'postgresql://', 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+
+def normalize_db_url(url):
+    # Always use the psycopg2 driver (installed via psycopg2-binary),
+    # whatever scheme the DATABASE_URL was given with.
+    if not url:
+        return 'sqlite:///accounts.db'
+    url = url.strip()
+    for prefix in ('postgres://', 'postgresql://', 'postgresql+psycopg://', 'postgresql+psycopg2://'):
+        if url.startswith(prefix):
+            return 'postgresql+psycopg2://' + url[len(prefix):]
+    return url
+
+
+app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(os.environ.get('DATABASE_URL'))
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
 db = SQLAlchemy(app)
 
@@ -534,7 +544,7 @@ def api_test_guest():
         data.get('uid', ''),
         data.get('password', ''),
         data.get('target', '0000000000'),
-        'BD',
+        'IND',
     )
     return jsonify(result)
 
