@@ -22,6 +22,9 @@ from ff_proto import freefire_pb2, send_like_pb2
 app = Flask(__name__)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# The bot always works on the Bangladesh server.
+REGION = 'BD'
+
 
 def normalize_db_url(url):
     # Always use the psycopg2 driver (installed via psycopg2-binary),
@@ -38,9 +41,6 @@ def normalize_db_url(url):
 app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(os.environ.get('DATABASE_URL'))
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
-# The bot always works on the Bangladesh server.
-REGION = 'BD'
-
 db = SQLAlchemy(app)
 
 MAIN_KEY = base64.b64decode('WWcmdGMlREV1aDYlWmNeOA==')
@@ -50,7 +50,17 @@ RELEASEVERSION = "OB50"
 CLIENT_ID = "100067"
 CLIENT_SECRET = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 
+# Third-party services. Both can be changed from the Render Environment tab.
+GUILD_API_URL = os.environ.get('GUILD_API_URL', 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo').strip()
+GUILD_API_URL_2 = os.environ.get('GUILD_API_URL_2', 'https://www.public.freefireinfo.site/api/info').strip()
+GUILD_API_KEY_2 = os.environ.get('GUILD_API_KEY_2', 'astute_ff').strip()
 
+# These two services receive the guest UID and password in the URL, so they are OFF by default.
+# Set THIRD_PARTY_TOKEN_FALLBACK=1 on Render only if you accept that risk.
+THIRD_PARTY_TOKEN_FALLBACK = os.environ.get('THIRD_PARTY_TOKEN_FALLBACK', '0') == '1'
+
+
+# ─── Database model ───────────────────────────────────────────────────────
 class GuestAccount(db.Model):
     __tablename__ = 'guest_accounts'
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -64,22 +74,30 @@ class GuestAccount(db.Model):
     matches_played = db.Column(db.Integer, default=0)
 
     def to_dict(self):
-        return {
+        d = {
             'uid': self.uid,
             'region': self.region,
             'is_working': self.is_working,
             'glory_contributed': self.glory_contributed,
             'matches_played': self.matches_played,
         }
+        if self.added_at:
+            d['added_at'] = self.added_at.isoformat()
+        if self.last_used:
+            d['last_used'] = self.last_used.isoformat()
+        return d
 
-with app.app_context():
-    db.create_all()
+
+try:
+    with app.app_context():
+        db.create_all()
+except Exception as _e:
+    print('Database init failed:', type(_e).__name__, str(_e)[:200])
 
 
+# ─── Guild info lookup ────────────────────────────────────────────────────
 guild_info_cache = {}
 GUILD_INFO_CACHE_TTL = 300
-# Third-party lookup service. Override with the GUILD_API_URL environment variable on Render if it goes down.
-GUILD_API_URL = os.environ.get('GUILD_API_URL', 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo').strip()
 
 
 def _find_key(obj, names):
@@ -98,6 +116,20 @@ def _find_key(obj, names):
             if r not in (None, ''):
                 return r
     return None
+
+
+def _fill_guild(guild_data, d):
+    """Fill guild_data from a JSON reply. Returns True when a guild name was found."""
+    name = _find_key(d, ['clanName', 'GuildName', 'guildName', 'name'])
+    if not name:
+        return False
+    guild_data['guildFound'] = True
+    guild_data['guildName'] = name
+    guild_data['guildLevel'] = _find_key(d, ['clanLevel', 'GuildLevel', 'guildLevel', 'level']) or 0
+    guild_data['memberNum'] = _find_key(d, ['memberNum', 'GuildMember', 'guildMember', 'memberCount', 'members']) or 0
+    guild_data['capacity'] = _find_key(d, ['capacity', 'GuildCapacity', 'guildCapacity']) or 35
+    guild_data['guildOwner'] = _find_key(d, ['captainId', 'GuildOwner', 'guildOwner', 'ownerId']) or ''
+    return True
 
 
 def fetch_guild_info(guild_id, region=REGION):
@@ -120,26 +152,22 @@ def fetch_guild_info(guild_id, region=REGION):
         'region': region,
     }
 
-    url = GUILD_API_URL + '?region=' + region + '&guildID=' + guild_id
-    # The lookup service is a free host that can be asleep, so try twice with a long timeout.
+    # Method 1: free-ff-api. The host can be asleep, so try twice with a long timeout.
+    url1 = GUILD_API_URL + '?region=' + region + '&guildID=' + guild_id
     for attempt in range(2):
         try:
-            r = sync_requests.get(url, timeout=25)
+            r = sync_requests.get(url1, timeout=25)
             if r.status_code == 200:
-                d = r.json()
-                name = _find_key(d, ['clanName', 'GuildName', 'guildName', 'name'])
-                if name:
-                    guild_data['guildFound'] = True
-                    guild_data['guildName'] = name
-                    guild_data['guildLevel'] = _find_key(d, ['clanLevel', 'GuildLevel', 'guildLevel', 'level']) or 0
-                    guild_data['memberNum'] = _find_key(d, ['memberNum', 'GuildMember', 'memberCount', 'members']) or 0
-                    guild_data['capacity'] = _find_key(d, ['capacity', 'GuildCapacity']) or 35
-                    guild_data['guildOwner'] = _find_key(d, ['captainId', 'GuildOwner', 'ownerId']) or ''
+                if _fill_guild(guild_data, r.json()):
+                    guild_data['lookupFailed'] = False
+                    guild_data['lookupError'] = ''
                     guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
                     return guild_data
+                guild_data['lookupFailed'] = False
                 guild_data['lookupError'] = 'Service replied but no guild name in it'
                 break
             if r.status_code == 404:
+                guild_data['lookupFailed'] = False
                 guild_data['lookupError'] = 'Guild not found in region ' + region
                 break
             guild_data['lookupFailed'] = True
@@ -149,50 +177,97 @@ def fetch_guild_info(guild_id, region=REGION):
             guild_data['lookupError'] = (type(e).__name__ + ': ' + str(e))[:120]
         time.sleep(1)
 
+    # Method 2: freefireinfo.site
+    try:
+        url2 = GUILD_API_URL_2 + '/' + region.lower() + '/' + guild_id + '?key=' + GUILD_API_KEY_2
+        r = sync_requests.get(url2, timeout=15)
+        if r.status_code == 200:
+            d = r.json()
+            clan = d.get('clanBasicInfo', None) if isinstance(d, dict) else None
+            if clan and clan.get('clanName', ''):
+                guild_data.update({
+                    'guildFound': True,
+                    'lookupFailed': False,
+                    'lookupError': '',
+                    'guildName': clan.get('clanName', 'Unknown'),
+                    'guildLevel': clan.get('clanLevel', 0),
+                    'memberNum': clan.get('memberNum', 0),
+                    'guildOwner': clan.get('captainId', ''),
+                })
+                guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
+                return guild_data
+    except Exception as e:
+        if not guild_data['lookupError']:
+            guild_data['lookupFailed'] = True
+            guild_data['lookupError'] = (type(e).__name__ + ': ' + str(e))[:120]
+
     # Only cache a definite "not found". Temporary failures are never cached.
     if not guild_data['lookupFailed']:
         guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
     return guild_data
 
 
+# ─── Free Fire JWT + API ──────────────────────────────────────────────────
 def aes_encrypt(key, iv, plaintext):
     return AES.new(key, AES.MODE_CBC, iv).encrypt(pad(plaintext, AES.block_size))
 
 
 async def get_access_token(uid, password):
+    """Returns (access_token, open_id, detail). detail explains a failure."""
     url = 'https://ffmconnect.live.gop.garenanow.com/oauth/guest/token/grant'
-    payload = {
-        'client_id': int(CLIENT_ID),
-        'client_secret': CLIENT_SECRET,
-        'client_type': 2,
-        'password': password,
-        'response_type': 'token',
-        'uid': int(uid),
-    }
+    payload = (
+        'uid=' + str(uid) + '&password=' + str(password) +
+        '&response_type=token&client_type=2&client_secret=' + CLIENT_SECRET +
+        '&client_id=' + CLIENT_ID
+    )
     headers = {
         'User-Agent': USER_AGENT,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json; charset=utf-8',
         'Connection': 'Keep-Alive',
         'Accept-Encoding': 'gzip',
+        'Content-Type': 'application/x-www-form-urlencoded',
     }
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json=payload, headers=headers, timeout=15)
+        resp = await client.post(url, content=payload, headers=headers, timeout=15)
         try:
             data = resp.json()
         except Exception:
-            raise ValueError('Step 1 (guest login): HTTP ' + str(resp.status_code) + ', reply is not JSON')
+            return '0', '0', 'HTTP ' + str(resp.status_code) + ', reply is not JSON'
         inner = data.get('data', data) if isinstance(data, dict) else {}
         token = inner.get('access_token', '0')
+        open_id = inner.get('open_id', '0')
+        detail = ''
         if token == '0':
-            raise ValueError('Step 1 (guest login) rejected, HTTP ' + str(resp.status_code) + ': ' + str(data)[:90])
-        return token, inner.get('open_id', '0')
+            detail = 'HTTP ' + str(resp.status_code) + ': ' + str(data)[:90]
+        return token, open_id, detail
 
 
 async def create_jwt(uid, password):
-    access_token, open_id = await get_access_token(uid, password)
+    access_token, open_id, detail = await get_access_token(uid, password)
     if access_token == '0':
-        raise ValueError('Failed to get access token')
+        if THIRD_PARTY_TOKEN_FALLBACK:
+            try:
+                r = sync_requests.get(
+                    'https://jwt-gen-api-v2.onrender.com/token?uid=' + str(uid) + '&password=' + str(password),
+                    timeout=10
+                )
+                d = r.json()
+                token = d.get('token', '0')
+                if token != '0':
+                    return token, d.get('lockRegion', '') or d.get('region', '') or REGION
+            except Exception:
+                pass
+            try:
+                r = sync_requests.get(
+                    'https://grant-access-token.deno.dev/get_token?uid=' + str(uid) + '&password=' + str(password),
+                    timeout=10
+                )
+                d = r.json()
+                token = d.get('access_token', '') or d.get('token', '0')
+                if token != '0':
+                    return token, REGION
+            except Exception:
+                pass
+        raise ValueError('Step 1 (guest login) rejected, ' + (detail or 'no access token'))
 
     login_req = {
         'open_id': open_id,
@@ -201,8 +276,7 @@ async def create_jwt(uid, password):
         'orign_platform_type': '4',
     }
     proto_msg = json_format.ParseDict(login_req, freefire_pb2.LoginReq())
-    proto_bytes = proto_msg.SerializeToString()
-    payload = aes_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
+    payload = aes_encrypt(MAIN_KEY, MAIN_IV, proto_msg.SerializeToString())
 
     headers = {
         'User-Agent': USER_AGENT,
@@ -234,20 +308,24 @@ async def create_jwt(uid, password):
         return token, lock_region
 
 
-async def send_ff_request(guest_uid, guest_password, target_uid, region):
-    jwt, lock_region = await create_jwt(guest_uid, guest_password)
-
+def create_like_payload(target_uid, region):
     msg = send_like_pb2.like()
     msg.uid = int(target_uid)
     msg.region = region
-    proto_bytes = msg.SerializeToString()
-    payload = aes_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
+    return aes_encrypt(MAIN_KEY, MAIN_IV, msg.SerializeToString())
 
+
+def get_base_url(region):
+    # Only India has its own host. Bangladesh (BD) and the rest use the shared host.
     if region == 'IND':
-        base_url = 'https://client.ind.freefiremobile.com'
-    else:
-        base_url = 'https://clientbp.ggblueshark.com'
+        return 'https://client.ind.freefiremobile.com'
+    return 'https://clientbp.ggblueshark.com'
 
+
+async def send_ff_request(guest_uid, guest_password, target_uid, region):
+    jwt, lock_region = await create_jwt(guest_uid, guest_password)
+    payload = create_like_payload(target_uid, region)
+    base_url = get_base_url(region)
     headers = {
         'User-Agent': USER_AGENT,
         'Connection': 'Keep-Alive',
@@ -260,33 +338,40 @@ async def send_ff_request(guest_uid, guest_password, target_uid, region):
         'ReleaseVersion': RELEASEVERSION,
     }
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            base_url + '/LikeProfile',
-            content=payload,
-            headers=headers,
-            timeout=30,
-        )
-        return resp.status_code
+        resp = await client.post(base_url + '/LikeProfile', content=payload, headers=headers, timeout=30)
+        return resp.status_code, jwt[:30] + '...'
 
 
 def send_ff_sync(uid, pwd, target, region):
+    loop = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        status = loop.run_until_complete(send_ff_request(uid, pwd, target, region))
+        status, jwt_preview = loop.run_until_complete(send_ff_request(uid, pwd, target, region))
         if status == 200:
-            return {'success': True, 'status': status, 'jwt': 'sent'}
-        return {'success': False, 'status': status, 'message': 'Step 3 (LikeProfile): HTTP ' + str(status)}
+            return {'success': True, 'status': status, 'jwt': jwt_preview}
+        return {
+            'success': False, 'status': status, 'jwt': jwt_preview,
+            'message': 'Step 3 (LikeProfile): HTTP ' + str(status),
+        }
     except Exception as e:
         return {'success': False, 'message': (type(e).__name__ + ': ' + str(e))[:160]}
+    finally:
+        if loop is not None:
+            try:
+                loop.close()
+            except Exception:
+                pass
 
 
+# ─── Bot state engine ─────────────────────────────────────────────────────
 class BotState:
     def __init__(self):
         self.guild_id = ''
         self.region = REGION
         self.guild_info = {}
         self.running = False
+        self.run_id = 0
         self.bots = {}
         self.stats = {
             'total_glory': 0,
@@ -307,35 +392,36 @@ sse_queues = []
 sse_lock = threading.Lock()
 
 
+def snapshot():
+    """Current state as a plain dict. Caller must hold bot_state.lock."""
+    return {
+        'guild_id': bot_state.guild_id,
+        'guild_info': bot_state.guild_info,
+        'running': bot_state.running,
+        'bots': dict(bot_state.bots),
+        'stats': dict(bot_state.stats),
+    }
+
+
 def broadcast():
     with bot_state.lock:
-        start = bot_state.stats['start_time']
-        if start:
-            elapsed = time.time() - start
-            bot_state.stats['running_hours'] = round(elapsed / 3600, 2)
-            if elapsed > 0:
-                rate = int(bot_state.stats['success'] * 4 / (elapsed / 3600))
-                bot_state.stats['glory_per_hour'] = rate
-        active = 0
-        for b in bot_state.bots.values():
-            s = b.get('status', '')
-            if s in ('connecting', 'playing', 'success'):
-                active += 1
-        bot_state.stats['active_bots'] = active
-        payload = {
-            'guild_id': bot_state.guild_id,
-            'guild_info': bot_state.guild_info,
-            'running': bot_state.running,
-            'bots': dict(bot_state.bots),
-            'stats': dict(bot_state.stats),
-            'timestamp': datetime.utcnow().isoformat(),
-        }
+        if bot_state.stats['start_time']:
+            e = time.time() - bot_state.stats['start_time']
+            bot_state.stats['running_hours'] = round(e / 3600, 2)
+            if e > 0:
+                bot_state.stats['glory_per_hour'] = int(bot_state.stats['success'] * 4 / (e / 3600))
+        bot_state.stats['active_bots'] = sum(
+            1 for b in bot_state.bots.values()
+            if b.get('status') in ('connecting', 'playing', 'success')
+        )
+        s = snapshot()
+        s['timestamp'] = datetime.utcnow().isoformat()
     with sse_lock:
         dead = []
         for q in sse_queues:
             try:
-                q.put_nowait(payload)
-            except:
+                q.put_nowait(s)
+            except Exception:
                 dead.append(q)
         for d in dead:
             if d in sse_queues:
@@ -351,13 +437,20 @@ def _broadcaster():
 threading.Thread(target=_broadcaster, daemon=True).start()
 
 
-def bot_worker(bot_id, uid, password, guild_id, region):
+def bot_worker(bot_id, uid, password, guild_id, region, run_id):
     key = 'bot_' + str(bot_id)
     total_sent = 0
     total_ok = 0
     last_error = ''
-    while bot_state.running:
+
+    def alive():
+        # A worker belongs to one run. After Stop or a restart its run_id is stale.
+        return bot_state.running and bot_state.run_id == run_id
+
+    while alive():
         with bot_state.lock:
+            if not alive():
+                break
             bot_state.bots[key] = {
                 'uid': uid,
                 'status': 'connecting',
@@ -368,10 +461,12 @@ def bot_worker(bot_id, uid, password, guild_id, region):
             }
         result = send_ff_sync(uid, password, guild_id, region)
         total_sent += 1
-        if result.get('success'):
-            total_ok += 1
-            last_error = ''
-            with bot_state.lock:
+        with bot_state.lock:
+            if not alive():
+                break
+            if result.get('success'):
+                total_ok += 1
+                last_error = ''
                 bot_state.stats['success'] += 1
                 bot_state.stats['total_glory'] += 4
                 bot_state.stats['matches'] += 1
@@ -381,10 +476,10 @@ def bot_worker(bot_id, uid, password, guild_id, region):
                     'sent': total_sent,
                     'ok': total_ok,
                     'last_active': time.time(),
+                    'jwt': result.get('jwt', ''),
                 }
-        else:
-            last_error = result.get('message') or ('HTTP ' + str(result.get('status', '?')))
-            with bot_state.lock:
+            else:
+                last_error = result.get('message') or ('HTTP ' + str(result.get('status', '?')))
                 bot_state.stats['failed'] += 1
                 bot_state.bots[key] = {
                     'uid': uid,
@@ -395,11 +490,12 @@ def bot_worker(bot_id, uid, password, guild_id, region):
                     'error': last_error,
                 }
         for _ in range(random.randint(60, 180)):
-            if not bot_state.running:
+            if not alive():
                 break
             time.sleep(1)
 
 
+# ─── Flask routes ─────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -412,20 +508,18 @@ def dashboard():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'alive'})
+    try:
+        accounts = GuestAccount.query.count()
+    except Exception:
+        accounts = -1
+    return jsonify({'status': 'alive', 'accounts': accounts, 'time': datetime.utcnow().isoformat()})
 
 
 @app.route('/api/status')
 def api_status():
     broadcast()
     with bot_state.lock:
-        return jsonify({
-            'guild_id': bot_state.guild_id,
-            'guild_info': bot_state.guild_info,
-            'running': bot_state.running,
-            'bots': dict(bot_state.bots),
-            'stats': dict(bot_state.stats),
-        })
+        return jsonify(snapshot())
 
 
 @app.route('/api/status/stream')
@@ -434,15 +528,11 @@ def status_stream():
     with sse_lock:
         sse_queues.append(q)
 
-    def gen():
+    def generate():
         try:
-            init = json.dumps({
-                'guild_id': bot_state.guild_id,
-                'guild_info': bot_state.guild_info,
-                'running': bot_state.running,
-                'bots': dict(bot_state.bots),
-                'stats': dict(bot_state.stats),
-            })
+            # Build the first message under the lock, but yield after releasing it.
+            with bot_state.lock:
+                init = json.dumps(snapshot())
             yield 'data: ' + init + '\n\n'
             while True:
                 try:
@@ -456,12 +546,9 @@ def status_stream():
                     sse_queues.remove(q)
 
     return Response(
-        stream_with_context(gen()),
+        stream_with_context(generate()),
         mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-        }
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
     )
 
 
@@ -477,9 +564,13 @@ def api_guild_info():
 
 @app.route('/api/start', methods=['POST'])
 def api_start():
-    data = request.get_json()
-    guild_id = data.get('guild_id', '').strip()
-    bot_count = int(data.get('bot_count', 5))
+    data = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id', '')).strip()
+    try:
+        bot_count = int(data.get('bot_count', 5))
+    except (TypeError, ValueError):
+        bot_count = 5
+    bot_count = max(1, min(bot_count, 100))
     region = REGION
     if not guild_id or not guild_id.isdigit():
         return jsonify({'success': False, 'message': 'Valid numeric Guild ID required'})
@@ -489,11 +580,11 @@ def api_start():
             'success': False,
             'message': 'Need ' + str(bot_count) + ' working accounts, have ' + str(len(accounts)) + '. Generate more!',
         })
-    if bot_state.running:
-        bot_state.running = False
-        time.sleep(1)
     guild_info = fetch_guild_info(guild_id, region)
     with bot_state.lock:
+        # A new run_id retires every worker of the previous run at once.
+        bot_state.run_id += 1
+        run_id = bot_state.run_id
         bot_state.guild_id = guild_id
         bot_state.guild_info = guild_info
         bot_state.region = region
@@ -504,19 +595,19 @@ def api_start():
             'glory_per_hour': 0, 'active_bots': 0, 'bot_count': bot_count,
             'start_time': time.time(), 'running_hours': 0,
         }
-    for i, acc in enumerate(accounts):
-        with bot_state.lock:
+        for i, acc in enumerate(accounts):
             bot_state.bots['bot_' + str(i)] = {
                 'uid': acc.uid, 'status': 'starting',
                 'sent': 0, 'ok': 0, 'last_active': time.time(),
             }
+    for i, acc in enumerate(accounts):
         threading.Thread(
             target=bot_worker,
-            args=(i, acc.uid, acc.password, guild_id, region),
+            args=(i, acc.uid, acc.password, guild_id, region, run_id),
             daemon=True
         ).start()
         acc.last_used = datetime.utcnow()
-        db.session.commit()
+    db.session.commit()
     return jsonify({
         'success': True,
         'message': 'Started ' + str(bot_count) + ' bots for guild ' + guild_id,
@@ -526,8 +617,9 @@ def api_start():
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
-    bot_state.running = False
     with bot_state.lock:
+        bot_state.running = False
+        bot_state.run_id += 1
         bot_state.bots = {}
     return jsonify({'success': True, 'message': 'Bot stopped'})
 
@@ -542,13 +634,14 @@ def api_guests_count():
 
 @app.route('/api/guests/add', methods=['POST'])
 def api_guests_add():
-    data = request.get_json()
-    uid = data.get('uid', '').strip()
-    password = data.get('password', '').strip()
+    data = request.get_json(silent=True) or {}
+    uid = str(data.get('uid', '')).strip()
+    password = str(data.get('password', '')).strip()
     region = REGION
     if not uid or not password:
         return jsonify({'success': False, 'message': 'UID and password required'})
-    if GuestAccount.query.filter_by(uid=uid).first():
+    existing = GuestAccount.query.filter_by(uid=uid).first()
+    if existing:
         return jsonify({'success': False, 'message': 'Account already exists'})
     acc = GuestAccount(uid=uid, password=password, region=region)
     db.session.add(acc)
@@ -558,14 +651,21 @@ def api_guests_add():
 
 @app.route('/api/guests/generate', methods=['POST'])
 def api_guests_generate():
-    data = request.get_json()
-    count = int(data.get('count', 10))
+    # NOTE: these are random placeholder entries, NOT real Garena accounts.
+    # They cannot log in. Add real guest accounts with /api/guests/add instead.
+    data = request.get_json(silent=True) or {}
+    try:
+        count = int(data.get('count', 10))
+    except (TypeError, ValueError):
+        count = 10
+    count = max(1, min(count, 100))
     region = REGION
     generated = []
     for _ in range(count):
         fake_uid = str(random.randint(1000000000, 9999999999))
         fake_pass = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
-        if not GuestAccount.query.filter_by(uid=fake_uid).first():
+        existing = GuestAccount.query.filter_by(uid=fake_uid).first()
+        if not existing:
             acc = GuestAccount(uid=fake_uid, password=fake_pass, region=region)
             db.session.add(acc)
             generated.append(acc.to_dict())
@@ -575,8 +675,9 @@ def api_guests_generate():
 
 @app.route('/api/guests/delete', methods=['POST'])
 def api_guests_delete():
-    data = request.get_json()
-    acc = GuestAccount.query.filter_by(uid=data.get('uid', '')).first()
+    data = request.get_json(silent=True) or {}
+    uid = data.get('uid', '')
+    acc = GuestAccount.query.filter_by(uid=uid).first()
     if acc:
         db.session.delete(acc)
         db.session.commit()
@@ -597,16 +698,15 @@ def api_guests_list():
 
 @app.route('/api/test/guest', methods=['POST'])
 def api_test_guest():
-    data = request.get_json()
-    result = send_ff_sync(
-        data.get('uid', ''),
-        data.get('password', ''),
-        data.get('target', '0000000000'),
-        REGION,
-    )
+    data = request.get_json(silent=True) or {}
+    uid = data.get('uid', '')
+    password = data.get('password', '')
+    target = data.get('target', '0000000000')
+    result = send_ff_sync(uid, password, target, REGION)
     return jsonify(result)
 
 
+# ─── Main entry point ─────────────────────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
