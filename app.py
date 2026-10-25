@@ -78,6 +78,8 @@ with app.app_context():
 
 guild_info_cache = {}
 GUILD_INFO_CACHE_TTL = 300
+# Third-party lookup service. Override with the GUILD_API_URL environment variable on Render if it goes down.
+GUILD_API_URL = os.environ.get('GUILD_API_URL', 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo').strip()
 
 
 def _find_key(obj, names):
@@ -118,7 +120,7 @@ def fetch_guild_info(guild_id, region=REGION):
         'region': region,
     }
 
-    url = 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo?region=' + region + '&guildID=' + guild_id
+    url = GUILD_API_URL + '?region=' + region + '&guildID=' + guild_id
     # The lookup service is a free host that can be asleep, so try twice with a long timeout.
     for attempt in range(2):
         try:
