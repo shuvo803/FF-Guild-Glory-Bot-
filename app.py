@@ -77,6 +77,24 @@ guild_info_cache = {}
 GUILD_INFO_CACHE_TTL = 300
 
 
+def _find_key(obj, names):
+    """Search nested JSON for the first matching key."""
+    if isinstance(obj, dict):
+        for n in names:
+            if n in obj and obj[n] not in (None, ''):
+                return obj[n]
+        for v in obj.values():
+            r = _find_key(v, names)
+            if r not in (None, ''):
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _find_key(v, names)
+            if r not in (None, ''):
+                return r
+    return None
+
+
 def fetch_guild_info(guild_id, region='IND'):
     now = time.time()
     cache_key = guild_id + '_' + region
@@ -86,6 +104,8 @@ def fetch_guild_info(guild_id, region='IND'):
 
     guild_data = {
         'guildFound': False,
+        'lookupFailed': False,
+        'lookupError': '',
         'guildId': guild_id,
         'guildName': 'Unknown Guild',
         'guildLevel': 0,
@@ -95,23 +115,38 @@ def fetch_guild_info(guild_id, region='IND'):
         'region': region,
     }
 
-    try:
-        url = 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo?region=' + region + '&guildID=' + guild_id
-        r = sync_requests.get(url, timeout=8)
-        if r.status_code == 200:
-            d = r.json()
-            guild_data['guildFound'] = True
-            guild_data['guildName'] = d.get('clanName', d.get('GuildName', 'Unknown'))
-            guild_data['guildLevel'] = d.get('clanLevel', d.get('GuildLevel', 0))
-            guild_data['memberNum'] = d.get('memberNum', d.get('GuildMember', 0))
-            guild_data['capacity'] = d.get('capacity', d.get('GuildCapacity', 35))
-            guild_data['guildOwner'] = d.get('captainId', d.get('GuildOwner', ''))
-            guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
-            return guild_data
-    except:
-        pass
+    url = 'https://free-ff-api-src-5plp.onrender.com/api/v1/guildInfo?region=' + region + '&guildID=' + guild_id
+    # The lookup service is a free host that can be asleep, so try twice with a long timeout.
+    for attempt in range(2):
+        try:
+            r = sync_requests.get(url, timeout=25)
+            if r.status_code == 200:
+                d = r.json()
+                name = _find_key(d, ['clanName', 'GuildName', 'guildName', 'name'])
+                if name:
+                    guild_data['guildFound'] = True
+                    guild_data['guildName'] = name
+                    guild_data['guildLevel'] = _find_key(d, ['clanLevel', 'GuildLevel', 'guildLevel', 'level']) or 0
+                    guild_data['memberNum'] = _find_key(d, ['memberNum', 'GuildMember', 'memberCount', 'members']) or 0
+                    guild_data['capacity'] = _find_key(d, ['capacity', 'GuildCapacity']) or 35
+                    guild_data['guildOwner'] = _find_key(d, ['captainId', 'GuildOwner', 'ownerId']) or ''
+                    guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
+                    return guild_data
+                guild_data['lookupError'] = 'Service replied but no guild name in it'
+                break
+            if r.status_code == 404:
+                guild_data['lookupError'] = 'Guild not found in region ' + region
+                break
+            guild_data['lookupFailed'] = True
+            guild_data['lookupError'] = 'Lookup service returned HTTP ' + str(r.status_code)
+        except Exception as e:
+            guild_data['lookupFailed'] = True
+            guild_data['lookupError'] = (type(e).__name__ + ': ' + str(e))[:120]
+        time.sleep(1)
 
-    guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
+    # Only cache a definite "not found". Temporary failures are never cached.
+    if not guild_data['lookupFailed']:
+        guild_info_cache[cache_key] = {'data': guild_data, 'timestamp': now}
     return guild_data
 
 
